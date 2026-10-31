@@ -1,4 +1,8 @@
-import { useState } from "react";
+
+import { useEffect, useState } from "react";
+import type { Session } from "@supabase/supabase-js";
+import { supabase } from "./lib/supabase";
+import { loadSavedTheme, applyTheme } from "./lib/theme";
 
 import Login from "./pages/Login";
 import Dashboard from "./pages/Dashboard";
@@ -9,155 +13,164 @@ import Team from "./pages/Team";
 import Reports from "./pages/Reports";
 import Settings from "./pages/Settings";
 
+import AppLayout, {
+  type PageName,
+} from "./components/AppLayout";
+
 function App() {
-
-  const [isLoggedIn, setIsLoggedIn] =
-    useState(
-      localStorage.getItem(
-        "cisco-nexus-auth"
-      ) === "true"
-    );
-
+  const [session, setSession] = useState<Session | null>(null);
+  const [checkingSession, setCheckingSession] = useState(true);
   const [currentPage, setCurrentPage] =
-    useState("Dashboard");
-
+    useState<PageName | "ProjectDetails">("Dashboard");
   const [selectedProjectId, setSelectedProjectId] =
     useState<number | null>(null);
+  const [dashboardKey, setDashboardKey] = useState(0);
 
-  const [dashboardKey, setDashboardKey] =
-    useState(0);
+  useEffect(() => {
+    let active = true;
 
-  const handleLogin = () => {
+    const {
+      data: { subscription },
+    } = supabase.auth.onAuthStateChange((_event, nextSession) => {
+      if (!active) return;
 
-    setIsLoggedIn(true);
+      setSession(nextSession);
 
-    setCurrentPage("Dashboard");
+      if (nextSession?.user) {
+        loadSavedTheme(nextSession.user.id);
+      } else {
+        applyTheme(false);
+      }
 
-  };
+      setCheckingSession(false);
+    });
+
+    supabase.auth.getSession().then(({ data, error }) => {
+      if (!active) return;
+
+      if (error) {
+        console.error("Unable to restore session:", error);
+      }
+
+      const currentSession = data.session;
+      setSession(currentSession);
+
+      if (currentSession?.user) {
+        loadSavedTheme(currentSession.user.id);
+      } else {
+        applyTheme(false);
+      }
+
+      setCheckingSession(false);
+    });
+
+    return () => {
+      active = false;
+      subscription.unsubscribe();
+    };
+  }, []);
 
   const goToDashboard = () => {
-
-    setDashboardKey(
-      (previous) => previous + 1
-    );
-
+    setDashboardKey((previous) => previous + 1);
     setCurrentPage("Dashboard");
-
   };
 
-  const openProject = (
-    projectId: number
-  ) => {
-
+  const openProject = (projectId: number) => {
     setSelectedProjectId(projectId);
-
-    setCurrentPage(
-      "ProjectDetails"
-    );
-
+    setCurrentPage("ProjectDetails");
   };
 
-  if (!isLoggedIn) {
+  const navigate = (page: PageName) => {
+    setCurrentPage(page);
+  };
 
+  if (checkingSession) {
     return (
-      <Login
-        onLogin={handleLogin}
-      />
+      <div
+        style={{
+          minHeight: "100vh",
+          display: "grid",
+          placeItems: "center",
+          background: "#f4f7fb",
+          color: "#172b4d",
+          fontFamily: "Arial, sans-serif",
+        }}
+      >
+        Checking your session...
+      </div>
     );
-
   }
 
-  if (currentPage === "Projects") {
-
-    return (
-      <Projects
-        onBack={goToDashboard}
-        onOpenProject={openProject}
-      />
-    );
-
+  if (!session) {
+    return <Login onLogin={goToDashboard} />;
   }
 
-  if (
-    currentPage === "ProjectDetails" &&
-    selectedProjectId !== null
-  ) {
+  const layoutPage: PageName =
+    currentPage === "ProjectDetails" ? "Projects" : currentPage;
 
-    return (
-      <ProjectDetails
-        projectId={selectedProjectId}
-        onBack={() =>
-          setCurrentPage("Projects")
-        }
-      />
-    );
+  let pageContent;
 
-  }
+  switch (currentPage) {
+    case "Projects":
+      pageContent = (
+        <Projects
+          onBack={goToDashboard}
+          onOpenProject={openProject}
+        />
+      );
+      break;
 
-  if (currentPage === "Tasks") {
+    case "ProjectDetails":
+      pageContent =
+        selectedProjectId !== null ? (
+          <ProjectDetails
+            projectId={selectedProjectId}
+            onBack={() => setCurrentPage("Projects")}
+          />
+        ) : (
+          <Projects
+            onBack={goToDashboard}
+            onOpenProject={openProject}
+          />
+        );
+      break;
 
-    return (
-      <Tasks
-        onBack={goToDashboard}
-      />
-    );
+    case "Tasks":
+      pageContent = <Tasks onBack={goToDashboard} />;
+      break;
 
-  }
+    case "Team":
+      pageContent = <Team onBack={goToDashboard} />;
+      break;
 
-  if (currentPage === "Team") {
+    case "Reports":
+      pageContent = <Reports onBack={goToDashboard} />;
+      break;
 
-    return (
-      <Team
-        onBack={goToDashboard}
-      />
-    );
+    case "Settings":
+      pageContent = <Settings onBack={goToDashboard} />;
+      break;
 
-  }
-
-  if (currentPage === "Reports") {
-
-    return (
-      <Reports
-        onBack={goToDashboard}
-      />
-    );
-
-  }
-
-  if (currentPage === "Settings") {
-
-    return (
-      <Settings
-        onBack={goToDashboard}
-      />
-    );
-
+    default:
+      pageContent = (
+        <Dashboard
+          key={dashboardKey}
+          onNavigateToProjects={() => setCurrentPage("Projects")}
+          onNavigateToTasks={() => setCurrentPage("Tasks")}
+          onNavigateToTeam={() => setCurrentPage("Team")}
+          onNavigateToReports={() => setCurrentPage("Reports")}
+          onNavigateToSettings={() => setCurrentPage("Settings")}
+        />
+      );
   }
 
   return (
-    <Dashboard
-      key={dashboardKey}
-
-      onNavigateToProjects={() =>
-        setCurrentPage("Projects")
-      }
-
-      onNavigateToTasks={() =>
-        setCurrentPage("Tasks")
-      }
-
-      onNavigateToTeam={() =>
-        setCurrentPage("Team")
-      }
-
-      onNavigateToReports={() =>
-        setCurrentPage("Reports")
-      }
-
-      onNavigateToSettings={() =>
-        setCurrentPage("Settings")
-      }
-    />
+    <AppLayout
+      currentPage={layoutPage}
+      onNavigate={navigate}
+    >
+      {pageContent}
+    </AppLayout>
   );
 }
 

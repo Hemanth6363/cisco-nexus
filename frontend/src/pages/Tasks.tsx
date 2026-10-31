@@ -1,5 +1,5 @@
-
 import { useEffect, useState } from "react";
+import { supabase } from "../lib/supabase";
 import {
   ArrowLeft,
   Plus,
@@ -43,30 +43,6 @@ type TeamMember = {
 type TasksProps = {
   onBack: () => void;
 };
-
-const DEFAULT_TASKS: Task[] = [
-  {
-    id: 1,
-    title: "Design homepage",
-    project: "Website Redesign",
-    priority: "High",
-    status: "Completed",
-  },
-  {
-    id: 2,
-    title: "Create API structure",
-    project: "Mobile App",
-    priority: "Medium",
-    status: "Pending",
-  },
-  {
-    id: 3,
-    title: "Prepare campaign",
-    project: "Marketing Campaign",
-    priority: "Low",
-    status: "Pending",
-  },
-];
 
 const styles = `
   * { box-sizing: border-box; }
@@ -411,6 +387,90 @@ const styles = `
     .tasks-stat h2 { font-size: 24px; }
     .tasks-actions { padding-left: 0; }
     .tasks-modal { padding: 19px; }
+
+  }
+
+  /* Dark mode follows the saved theme applied to the document root. */
+  .dark-mode .tasks-page {
+    background: #111827;
+    color: #f3f4f6;
+  }
+
+  .dark-mode .tasks-stat,
+  .dark-mode .tasks-toolbar,
+  .dark-mode .tasks-card,
+  .dark-mode .tasks-empty,
+  .dark-mode .tasks-modal {
+    background: #1f2937;
+    color: #f3f4f6;
+    border-color: #374151;
+  }
+
+  .dark-mode .tasks-stat p,
+  .dark-mode .tasks-meta,
+  .dark-mode .tasks-note,
+  .dark-mode .tasks-empty {
+    color: #aab5c5;
+  }
+
+  .dark-mode .tasks-empty h3,
+  .dark-mode .tasks-title,
+  .dark-mode .tasks-modal-head h2,
+  .dark-mode .tasks-group label {
+    color: #f3f4f6;
+  }
+
+  .dark-mode .tasks-search input,
+  .dark-mode .tasks-filter,
+  .dark-mode .tasks-status,
+  .dark-mode .tasks-field,
+  .dark-mode .tasks-cancel {
+    background: #111827;
+    color: #f3f4f6;
+    border-color: #4b5563;
+  }
+
+  .dark-mode .tasks-search input::placeholder,
+  .dark-mode .tasks-field::placeholder {
+    color: #9ca3af;
+  }
+
+  .dark-mode .tasks-close {
+    background: #374151;
+    color: #f3f4f6;
+  }
+
+  .dark-mode .tasks-title.done {
+    color: #9ca3af;
+  }
+
+  .dark-mode .tasks-high {
+    background: #451f2a;
+    color: #fecaca;
+  }
+
+  .dark-mode .tasks-medium {
+    background: #453719;
+    color: #fde68a;
+  }
+
+  .dark-mode .tasks-low {
+    background: #153b2a;
+    color: #bbf7d0;
+  }
+
+  .dark-mode .tasks-edit {
+    background: #373151;
+    color: #c4b5fd;
+  }
+
+  .dark-mode .tasks-delete {
+    background: #451f2a;
+    color: #fecaca;
+  }
+
+  .dark-mode .tasks-cancel {
+    border-color: #4b5563;
   }
 `;
 
@@ -431,91 +491,87 @@ export default function Tasks({ onBack }: TasksProps) {
   const [assignedTo, setAssignedTo] = useState("");
   const [dueDate, setDueDate] = useState("");
 
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [pageError, setPageError] = useState("");
+
   useEffect(() => {
-    loadTasks();
-    loadProjects();
-    loadTeam();
-  }, []);
+    let cancelled = false;
 
-  const loadTasks = () => {
-    try {
-      const saved = localStorage.getItem("cisco-nexus-tasks");
+    async function loadData() {
+      setLoading(true);
+      setPageError("");
 
-      if (saved) {
-        const data = JSON.parse(saved);
+      const [taskResult, projectResult, teamResult] = await Promise.all([
+        supabase
+          .from("tasks")
+          .select("id, project_id, project_name, title, priority, status, assigned_to, due_date")
+          .order("id", { ascending: true }),
+        supabase
+          .from("projects")
+          .select("id, name, category, progress, status")
+          .order("id", { ascending: true }),
+        supabase
+          .from("team_members")
+          .select("id, name, email, role")
+          .order("id", { ascending: true }),
+      ]);
 
-        if (Array.isArray(data)) {
-          const safeTasks: Task[] = data.map(
-            (item: any, index: number) => ({
-              id: Number(item.id) || Date.now() + index,
-              title: item.title || item.name || "Untitled Task",
-              project:
-                item.project || item.projectName || "General",
-              projectId:
-                item.projectId != null
-                  ? Number(item.projectId)
-                  : undefined,
-              priority: ["High", "Medium", "Low"].includes(
-                item.priority
-              )
-                ? item.priority
-                : "Medium",
-              status: ["Pending", "In Progress", "Completed"].includes(
-                item.status
-              )
-                ? item.status
-                : "Pending",
-              assignedTo: item.assignedTo || "",
-              dueDate: item.dueDate || "",
-            })
-          );
+      if (cancelled) return;
 
-          setTasks(safeTasks);
-          localStorage.setItem(
-            "cisco-nexus-tasks",
-            JSON.stringify(safeTasks)
-          );
-          return;
-        }
+      const firstError = taskResult.error || projectResult.error || teamResult.error;
+      if (firstError) {
+        console.error("Could not load task data:", firstError.message);
+        setPageError(firstError.message);
+        setLoading(false);
+        return;
       }
-    } catch {
-      console.error("Could not load saved tasks.");
+
+      const loadedProjects: Project[] = (projectResult.data ?? []).map((item) => ({
+        id: Number(item.id),
+        name: item.name,
+        title: item.name,
+      }));
+
+      const loadedTeam: TeamMember[] = (teamResult.data ?? []).map((item) => ({
+        id: Number(item.id),
+        name: item.name,
+        email: item.email ?? "",
+        role: item.role ?? "",
+      }));
+
+      const loadedTasks: Task[] = (taskResult.data ?? []).map((item) => {
+        const matchingProject = loadedProjects.find(
+          (projectItem) => Number(projectItem.id) === Number(item.project_id)
+        );
+
+        return {
+          id: Number(item.id),
+          title: item.title || "Untitled Task",
+          project: matchingProject?.name || item.project_name || "General",
+          projectId: item.project_id == null ? undefined : Number(item.project_id),
+          priority: ["High", "Medium", "Low"].includes(item.priority)
+            ? item.priority
+            : "Medium",
+          status: ["Pending", "In Progress", "Completed"].includes(item.status)
+            ? (item.status as TaskStatus)
+            : "Pending",
+          assignedTo: item.assigned_to || "",
+          dueDate: item.due_date || "",
+        };
+      });
+
+      setProjects(loadedProjects);
+      setTeam(loadedTeam);
+      setTasks(loadedTasks);
+      setLoading(false);
     }
 
-    setTasks(DEFAULT_TASKS);
-    localStorage.setItem(
-      "cisco-nexus-tasks",
-      JSON.stringify(DEFAULT_TASKS)
-    );
-  };
-
-  const loadProjects = () => {
-    try {
-      const saved = localStorage.getItem("cisco-nexus-projects");
-      const data = saved ? JSON.parse(saved) : [];
-      setProjects(Array.isArray(data) ? data : []);
-    } catch {
-      setProjects([]);
-    }
-  };
-
-  const loadTeam = () => {
-    try {
-      const saved = localStorage.getItem("cisco-nexus-team");
-      const data = saved ? JSON.parse(saved) : [];
-      setTeam(Array.isArray(data) ? data : []);
-    } catch {
-      setTeam([]);
-    }
-  };
-
-  const saveTasks = (updated: Task[]) => {
-    setTasks(updated);
-    localStorage.setItem(
-      "cisco-nexus-tasks",
-      JSON.stringify(updated)
-    );
-  };
+    void loadData();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
 
   const resetForm = () => {
     setTitle("");
@@ -529,14 +585,10 @@ export default function Tasks({ onBack }: TasksProps) {
 
   const openCreateModal = () => {
     resetForm();
-    loadProjects();
-    loadTeam();
     setShowModal(true);
   };
 
   const openEditModal = (task: Task) => {
-    loadProjects();
-    loadTeam();
     setEditingId(task.id);
     setTitle(task.title);
     setProject(task.project);
@@ -547,7 +599,7 @@ export default function Tasks({ onBack }: TasksProps) {
     setShowModal(true);
   };
 
-  const saveTask = () => {
+  const saveTask = async () => {
     if (!title.trim()) {
       alert("Please enter a task title.");
       return;
@@ -558,63 +610,129 @@ export default function Tasks({ onBack }: TasksProps) {
       return;
     }
 
-    const selectedProject = projects.find(
-      (item, index) =>
-        (item.name || item.title || `Project ${index + 1}`) ===
-        project
-    );
+    setSaving(true);
+    setPageError("");
 
-    const taskData: Task = {
-      id: editingId ?? Date.now(),
-      title: title.trim(),
-      project,
-      projectId:
-        selectedProject?.id != null
-          ? Number(selectedProject.id)
-          : undefined,
-      priority,
-      status,
-      assignedTo,
-      dueDate,
-    };
+    try {
+      const { data: userData, error: userError } = await supabase.auth.getUser();
+      if (userError || !userData.user) {
+        throw new Error("Please sign in again before saving a task.");
+      }
 
-    if (editingId !== null) {
-      saveTasks(
-        tasks.map((task) =>
-          task.id === editingId ? taskData : task
-        )
+      const selectedProject = projects.find(
+        (item, index) => getProjectName(item, index) === project
       );
-    } else {
-      saveTasks([...tasks, taskData]);
+
+      const payload = {
+        project_id: selectedProject?.id ?? null,
+        project_name: project,
+        title: title.trim(),
+        priority,
+        status,
+        assigned_to: assignedTo || "",
+        due_date: dueDate || null,
+      };
+
+      if (editingId !== null) {
+        const { data, error } = await supabase
+          .from("tasks")
+          .update(payload)
+          .eq("id", editingId)
+          .select("id, project_id, project_name, title, priority, status, assigned_to, due_date")
+          .single();
+
+        if (error) throw error;
+
+        const updatedTask: Task = {
+          id: Number(data.id),
+          title: data.title,
+          project: data.project_name || project,
+          projectId: data.project_id == null ? undefined : Number(data.project_id),
+          priority: data.priority,
+          status: data.status as TaskStatus,
+          assignedTo: data.assigned_to || "",
+          dueDate: data.due_date || "",
+        };
+
+        setTasks((current) =>
+          current.map((item) => item.id === editingId ? updatedTask : item)
+        );
+      } else {
+        const { data, error } = await supabase
+          .from("tasks")
+          .insert({
+            ...payload,
+            owner_id: userData.user.id,
+            legacy_id: crypto.randomUUID(),
+          })
+          .select("id, project_id, project_name, title, priority, status, assigned_to, due_date")
+          .single();
+
+        if (error) throw error;
+
+        const newTask: Task = {
+          id: Number(data.id),
+          title: data.title,
+          project: data.project_name || project,
+          projectId: data.project_id == null ? undefined : Number(data.project_id),
+          priority: data.priority,
+          status: data.status as TaskStatus,
+          assignedTo: data.assigned_to || "",
+          dueDate: data.due_date || "",
+        };
+
+        setTasks((current) => [...current, newTask]);
+      }
+
+      setShowModal(false);
+      resetForm();
+    } catch (error) {
+      const message = error instanceof Error ? error.message : "An unexpected error occurred.";
+      console.error("Could not save task:", message);
+      setPageError(message);
+    } finally {
+      setSaving(false);
+    }
+  };
+
+  const updateTaskStatus = async (task: Task, nextStatus: TaskStatus) => {
+    setPageError("");
+    const { error } = await supabase
+      .from("tasks")
+      .update({ status: nextStatus })
+      .eq("id", task.id);
+
+    if (error) {
+      console.error("Could not update task status:", error.message);
+      setPageError(error.message);
+      return;
     }
 
-    setShowModal(false);
-    resetForm();
+    setTasks((current) =>
+      current.map((item) => item.id === task.id ? { ...item, status: nextStatus } : item)
+    );
   };
 
   const cycleStatus = (task: Task) => {
     const nextStatus: TaskStatus =
-      task.status === "Pending"
-        ? "In Progress"
-        : task.status === "In Progress"
-          ? "Completed"
-          : "Pending";
-
-    saveTasks(
-      tasks.map((item) =>
-        item.id === task.id
-          ? { ...item, status: nextStatus }
-          : item
-      )
-    );
+      task.status === "Pending" ? "In Progress" :
+      task.status === "In Progress" ? "Completed" : "Pending";
+    void updateTaskStatus(task, nextStatus);
   };
 
-  const deleteTask = (id: number) => {
-    if (!window.confirm("Are you sure you want to delete this task?")) {
+  const deleteTask = async (id: number) => {
+    if (!window.confirm("Are you sure you want to delete this task?")) return;
+
+    setPageError("");
+    const { error } = await supabase.from("tasks").delete().eq("id", id);
+
+    if (error) {
+      console.error("Could not delete task:", error.message);
+      setPageError(error.message);
       return;
     }
 
-    saveTasks(tasks.filter((task) => task.id !== id));
+    setTasks((current) => current.filter((task) => task.id !== id));
   };
 
   const filteredTasks = tasks.filter((task) => {
@@ -691,6 +809,16 @@ export default function Tasks({ onBack }: TasksProps) {
       </header>
 
       <main className="tasks-content">
+        {pageError && (
+          <div role="alert" style={{ background: document.documentElement.classList.contains("dark-mode") ? "#451f2a" : "#fff1f1", color: document.documentElement.classList.contains("dark-mode") ? "#fecaca" : "#a62b2b", padding: "12px 15px", borderRadius: 8, marginBottom: 18, overflowWrap: "anywhere" }}>
+            {pageError}
+          </div>
+        )}
+
+        {loading ? (
+          <div className="tasks-empty">Loading tasks from Supabase...</div>
+        ) : (
+        <>
         <div className="tasks-stats">
           <div className="tasks-stat">
             <p>Total Tasks</p>
@@ -812,13 +940,7 @@ export default function Tasks({ onBack }: TasksProps) {
                     value={task.status}
                     onChange={(event) => {
                       const nextStatus = event.target.value as TaskStatus;
-                      saveTasks(
-                        tasks.map((item) =>
-                          item.id === task.id
-                            ? { ...item, status: nextStatus }
-                            : item
-                        )
-                      );
+                      void updateTaskStatus(task, nextStatus);
                     }}
                   >
                     <option value="Pending">Pending</option>
@@ -847,6 +969,8 @@ export default function Tasks({ onBack }: TasksProps) {
               </div>
             ))}
           </div>
+        )}
+        </>
         )}
       </main>
 
@@ -936,7 +1060,7 @@ export default function Tasks({ onBack }: TasksProps) {
                       value={member.name}
                     >
                       {member.name}
-                      {member.role ? ` — ${member.role}` : ""}
+                      {member.role ? ` â€” ${member.role}` : ""}
                     </option>
                   ))}
               </select>
@@ -999,8 +1123,8 @@ export default function Tasks({ onBack }: TasksProps) {
                 Cancel
               </button>
 
-              <button className="tasks-save" onClick={saveTask}>
-                {editingId !== null ? "Save Changes" : "Create Task"}
+              <button className="tasks-save" onClick={() => void saveTask()} disabled={saving}>
+                {saving ? "Saving..." : editingId !== null ? "Save Changes" : "Create Task"}
               </button>
             </div>
           </div>

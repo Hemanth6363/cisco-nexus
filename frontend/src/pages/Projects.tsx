@@ -6,7 +6,15 @@ import {
   Trash2,
   FolderKanban,
   X,
+  ArrowUpRight,
+  AlertTriangle,
 } from "lucide-react";
+import { supabase } from "../lib/supabase";
+import {
+  getProjectProgress,
+  getProjectRisks,
+  type InsightTask,
+} from "../lib/projectInsights";
 
 type Project = {
   id: number;
@@ -21,901 +29,884 @@ type ProjectsProps = {
   onOpenProject: (projectId: number) => void;
 };
 
-const defaultProjects: Project[] = [
-  {
-    id: 1,
-    name: "Website Redesign",
-    category: "Development",
-    progress: 75,
-    status: "In Progress",
-  },
-  {
-    id: 2,
-    name: "Mobile App",
-    category: "Development",
-    progress: 50,
-    status: "In Progress",
-  },
-  {
-    id: 3,
-    name: "Marketing Campaign",
-    category: "Marketing",
-    progress: 100,
-    status: "Completed",
-  },
-  {
-    id: 4,
-    name: "Cloud Migration",
-    category: "Infrastructure",
-    progress: 25,
-    status: "Planning",
-  },
-];
-
 export default function Projects({
   onBack,
   onOpenProject,
 }: ProjectsProps) {
-  const [projects, setProjects] =
-    useState<Project[]>([]);
-
+  const [projects, setProjects] = useState<Project[]>([]);
+  const [tasks, setTasks] = useState<InsightTask[]>([]);
   const [search, setSearch] = useState("");
-
-  const [showModal, setShowModal] =
-    useState(false);
-
-  const [projectName, setProjectName] =
-    useState("");
-
-  const [category, setCategory] =
-    useState("Development");
-
-  const [progress, setProgress] =
-    useState("0");
-
-  const [status, setStatus] =
-    useState("Planning");
+  const [showModal, setShowModal] = useState(false);
+  const [projectName, setProjectName] = useState("");
+  const [category, setCategory] = useState("Development");
+  const [progress, setProgress] = useState("0");
+  const [status, setStatus] = useState("Planning");
+  const [loading, setLoading] = useState(true);
+  const [saving, setSaving] = useState(false);
+  const [deletingId, setDeletingId] = useState<number | null>(null);
+  const [pageError, setPageError] = useState("");
+  const [darkMode, setDarkMode] = useState(
+    () => document.documentElement.classList.contains("dark-mode"),
+  );
 
   useEffect(() => {
-    const savedProjects = localStorage.getItem(
-      "cisco-nexus-projects"
-    );
+    const root = document.documentElement;
 
-    if (savedProjects) {
+    const observer = new MutationObserver(() => {
+      setDarkMode(root.classList.contains("dark-mode"));
+    });
+
+    observer.observe(root, {
+      attributes: true,
+      attributeFilter: ["class"],
+    });
+
+    return () => observer.disconnect();
+  }, []);
+
+  const colors = {
+    surface: darkMode ? "#1f2937" : "#ffffff",
+    text: darkMode ? "#f3f4f6" : "#172b4d",
+    muted: darkMode ? "#aab5c5" : "#64748b",
+    border: darkMode ? "#374151" : "#e2e8f0",
+    input: darkMode ? "#111827" : "#ffffff",
+    primary: "#049fd9",
+    danger: "#dc2626",
+    shadow: darkMode
+      ? "0 4px 16px rgba(0,0,0,0.2)"
+      : "0 3px 12px rgba(16,36,58,0.04)",
+  };
+
+  const styles: Record<string, React.CSSProperties> = {
+    page: {
+      width: "100%",
+      minWidth: 0,
+      color: colors.text,
+      fontFamily: "inherit",
+    },
+    header: {
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "space-between",
+      gap: 16,
+      flexWrap: "wrap",
+      padding: 24,
+      marginBottom: 22,
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 14,
+      boxShadow: colors.shadow,
+    },
+    title: {
+      margin: 0,
+      fontSize: 26,
+      fontWeight: 750,
+      color: colors.text,
+    },
+    muted: {
+      color: colors.muted,
+      marginTop: 7,
+      fontSize: 14,
+      lineHeight: 1.6,
+    },
+    button: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      padding: "10px 14px",
+      borderRadius: 8,
+      border: `1px solid ${colors.border}`,
+      background: colors.surface,
+      color: colors.text,
+      cursor: "pointer",
+      fontSize: 13,
+      fontWeight: 600,
+    },
+    primaryButton: {
+      display: "inline-flex",
+      alignItems: "center",
+      justifyContent: "center",
+      gap: 8,
+      padding: "11px 16px",
+      borderRadius: 8,
+      border: "none",
+      background: colors.primary,
+      color: "#ffffff",
+      cursor: "pointer",
+      fontSize: 14,
+      fontWeight: 650,
+    },
+    toolbar: {
+      display: "flex",
+      alignItems: "center",
+      gap: 12,
+      flexWrap: "wrap",
+      padding: 16,
+      marginBottom: 20,
+      background: colors.surface,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 12,
+    },
+    searchWrap: {
+      display: "flex",
+      alignItems: "center",
+      gap: 10,
+      flex: 1,
+      minWidth: 200,
+      padding: "0 12px",
+      border: `1px solid ${colors.border}`,
+      borderRadius: 8,
+      background: colors.input,
+    },
+    input: {
+      width: "100%",
+      minWidth: 0,
+      padding: "12px 0",
+      border: "none",
+      outline: "none",
+      background: "transparent",
+      color: colors.text,
+      fontSize: 14,
+    },
+    grid: {
+      display: "grid",
+      gridTemplateColumns: "repeat(auto-fit, minmax(min(100%, 265px), 1fr))",
+      gap: 18,
+    },
+    card: {
+      padding: 22,
+      border: `1px solid ${colors.border}`,
+      borderRadius: 13,
+      background: colors.surface,
+      boxShadow: colors.shadow,
+      minWidth: 0,
+    },
+    badge: {
+      display: "inline-flex",
+      alignItems: "center",
+      gap: 6,
+      padding: "6px 10px",
+      borderRadius: 20,
+      background: darkMode ? "#12384a" : "#e8f6fc",
+      color: darkMode ? "#7dd3fc" : "#087eae",
+      fontSize: 12,
+      fontWeight: 650,
+    },
+    progressTrack: {
+      width: "100%",
+      height: 7,
+      borderRadius: 10,
+      overflow: "hidden",
+      background: darkMode ? "#374151" : "#edf2f7",
+      marginTop: 10,
+    },
+    modalBackdrop: {
+      position: "fixed",
+      inset: 0,
+      zIndex: 1000,
+      background: "rgba(15, 23, 42, 0.55)",
+      display: "flex",
+      alignItems: "center",
+      justifyContent: "center",
+      padding: 20,
+    },
+    modal: {
+      width: "100%",
+      maxWidth: 480,
+      maxHeight: "90vh",
+      overflowY: "auto",
+      padding: 26,
+      borderRadius: 15,
+      background: colors.surface,
+      color: colors.text,
+      border: `1px solid ${colors.border}`,
+      boxShadow: "0 20px 60px rgba(0,0,0,0.22)",
+    },
+    fieldLabel: {
+      display: "block",
+      fontSize: 13,
+      fontWeight: 650,
+      marginBottom: 8,
+      color: colors.text,
+    },
+    field: {
+      width: "100%",
+      boxSizing: "border-box",
+      padding: 12,
+      borderRadius: 8,
+      border: `1px solid ${colors.border}`,
+      background: colors.input,
+      color: colors.text,
+      fontSize: 14,
+    },
+  };
+
+  useEffect(() => {
+    let active = true;
+
+    async function loadProjectsAndTasks() {
+      setPageError("");
+
       try {
-        const data = JSON.parse(savedProjects);
+        const { data: userResult, error: userError } =
+          await supabase.auth.getUser();
 
-        if (Array.isArray(data)) {
-          setProjects(data);
+        if (userError || !userResult.user) {
+          if (active) {
+            setPageError("Please sign in again to view your projects.");
+            setLoading(false);
+          }
           return;
         }
-      } catch {
-        // Ignore invalid data
+
+        const [projectResult, taskResult] = await Promise.all([
+          supabase
+            .from("projects")
+            .select("id, name, category, progress, status")
+            .eq("owner_id", userResult.user.id)
+            .order("created_at", { ascending: false }),
+
+          supabase
+            .from("tasks")
+            .select(
+              "id, project_id, project_name, title, status, priority, due_date"
+            ),
+        ]);
+
+        if (!active) return;
+
+        if (projectResult.error) {
+          setPageError(projectResult.error.message);
+          setProjects([]);
+          return;
+        }
+
+        setProjects((projectResult.data ?? []) as Project[]);
+
+        if (taskResult.error) {
+          setTasks([]);
+          setPageError(
+            `Projects loaded, but tasks could not be loaded: ${taskResult.error.message}`
+          );
+        } else {
+          setTasks((taskResult.data ?? []) as InsightTask[]);
+        }
+      } catch (error) {
+        if (active) {
+          setPageError(
+            error instanceof Error
+              ? error.message
+              : "Unable to load projects and tasks."
+          );
+        }
+      } finally {
+        if (active) setLoading(false);
       }
     }
 
-    setProjects(defaultProjects);
+    void loadProjectsAndTasks();
 
-    localStorage.setItem(
-      "cisco-nexus-projects",
-      JSON.stringify(defaultProjects)
-    );
+    const channel = supabase
+      .channel("projects-tasks-live-updates")
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "projects",
+        },
+        () => {
+          if (active) void loadProjectsAndTasks();
+        }
+      )
+      .on(
+        "postgres_changes",
+        {
+          event: "*",
+          schema: "public",
+          table: "tasks",
+        },
+        () => {
+          if (active) void loadProjectsAndTasks();
+        }
+      )
+      .subscribe((status) => {
+        if (status === "SUBSCRIBED") {
+          console.info("Cisco Nexus Realtime connected.");
+        } else if (
+          status === "CHANNEL_ERROR" ||
+          status === "TIMED_OUT"
+        ) {
+          console.error(
+            "Cisco Nexus Realtime connection issue:",
+            status
+          );
+        }
+      });
+
+    return () => {
+      active = false;
+      void supabase.removeChannel(channel);
+    };
   }, []);
 
-  const saveProjects = (
-    updatedProjects: Project[]
-  ) => {
-    setProjects(updatedProjects);
-
-    localStorage.setItem(
-      "cisco-nexus-projects",
-      JSON.stringify(updatedProjects)
+  function getProgress(project: Project): number {
+    return getProjectProgress(
+      {
+        id: project.id,
+        name: project.name,
+        progress: project.progress,
+        status: project.status,
+      },
+      tasks,
     );
-  };
+  }
 
-  const addProject = () => {
-    if (!projectName.trim()) {
-      alert("Please enter a project name.");
+  function getRisks(project: Project): string[] {
+    return getProjectRisks(
+      {
+        id: project.id,
+        name: project.name,
+        progress: project.progress,
+        status: project.status,
+      },
+      tasks,
+    );
+  }
+
+  async function addProject(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+
+    const name = projectName.trim();
+
+    if (!name) {
+      setPageError("Please enter a project name.");
       return;
     }
 
-    const newProject: Project = {
-      id: Date.now(),
-      name: projectName.trim(),
-      category,
-      progress: Number(progress),
-      status,
-    };
+    setSaving(true);
+    setPageError("");
 
-    saveProjects([
-      ...projects,
-      newProject,
-    ]);
+    try {
+      const { data: userResult, error: userError } =
+        await supabase.auth.getUser();
 
-    setProjectName("");
-    setCategory("Development");
-    setProgress("0");
-    setStatus("Planning");
-    setShowModal(false);
-  };
+      if (userError || !userResult.user) {
+        setPageError("Your session has expired. Please sign in again.");
+        return;
+      }
 
-  const deleteProject = (id: number) => {
-    const confirmed = window.confirm(
-      "Are you sure you want to delete this project?"
-    );
+      const newProject = {
+        owner_id: userResult.user.id,
+        legacy_id: crypto.randomUUID(),
+        name,
+        description: "",
+        category,
+        progress: status === "Completed" ? 100 : Number(progress),
+        status,
+        assigned_members: [],
+      };
 
-    if (!confirmed) {
-      return;
-    }
+      const { data, error } = await supabase
+        .from("projects")
+        .insert(newProject)
+        .select("id, name, category, progress, status")
+        .single();
 
-    const updatedProjects =
-      projects.filter(
-        (project) =>
-          project.id !== id
+      if (error) {
+        setPageError(error.message);
+        return;
+      }
+
+      if (data) {
+        setProjects((previous) => [data as Project, ...previous]);
+        setProjectName("");
+        setCategory("Development");
+        setProgress("0");
+        setStatus("Planning");
+        setShowModal(false);
+      }
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : "Unable to create project.",
       );
+    } finally {
+      setSaving(false);
+    }
+  }
 
-    saveProjects(updatedProjects);
-  };
-
-  const filteredProjects =
-    projects.filter(
-      (project) =>
-        project.name
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        project.category
-          .toLowerCase()
-          .includes(search.toLowerCase()) ||
-        project.status
-          .toLowerCase()
-          .includes(search.toLowerCase())
+  async function deleteProject(projectId: number) {
+    const confirmed = window.confirm(
+      "Are you sure you want to delete this project?",
     );
+
+    if (!confirmed) return;
+
+    setPageError("");
+    setDeletingId(projectId);
+
+    try {
+      const { error } = await supabase
+        .from("projects")
+        .delete()
+        .eq("id", projectId);
+
+      if (error) {
+        setPageError(error.message);
+        return;
+      }
+
+      setProjects((previous) =>
+        previous.filter((project) => project.id !== projectId),
+      );
+    } catch (error) {
+      setPageError(
+        error instanceof Error ? error.message : "Unable to delete project.",
+      );
+    } finally {
+      setDeletingId(null);
+    }
+  }
+
+  const filteredProjects = projects.filter((project) => {
+    const query = search.toLowerCase();
+
+    return (
+      (project.name ?? "").toLowerCase().includes(query) ||
+      (project.category ?? "").toLowerCase().includes(query) ||
+      (project.status ?? "").toLowerCase().includes(query)
+    );
+  });
 
   return (
-    <div className="projects-page">
-
+    <div style={styles.page} className="projects-page-root">
       <style>{`
-        * {
-          box-sizing: border-box;
-        }
-
-        body {
-          margin: 0;
-          font-family: Arial, Helvetica, sans-serif;
-          background: #f5f6fa;
-        }
-
-        .projects-page {
-          min-height: 100vh;
-          background: #f5f6fa;
-          color: #20243a;
-        }
-
-        .projects-header {
-          background: #171a2e;
-          color: white;
-          padding: 25px 35px;
-        }
-
-        .header-content {
-          max-width: 1250px;
-          margin: auto;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          gap: 20px;
-        }
-
-        .header-left {
-          display: flex;
-          align-items: center;
-          gap: 18px;
-        }
-
-        .back-button {
-          border: 1px solid #454963;
-          background: transparent;
-          color: white;
-          width: 42px;
-          height: 42px;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-        }
-
-        .back-button:hover {
-          background: #303452;
-        }
-
-        .header-title {
-          margin: 0;
-          font-size: 27px;
-        }
-
-        .header-subtitle {
-          margin: 6px 0 0;
-          color: #aeb1c2;
-          font-size: 14px;
-        }
-
-        .add-button {
-          border: none;
-          background: #625cf5;
-          color: white;
-          padding: 12px 18px;
-          border-radius: 8px;
-          display: flex;
-          align-items: center;
-          gap: 8px;
-          cursor: pointer;
-          font-size: 14px;
-        }
-
-        .add-button:hover {
-          background: #514bea;
-        }
-
-        .content {
-          max-width: 1250px;
-          margin: auto;
-          padding: 30px 35px;
-        }
-
-        .toolbar {
-          background: white;
-          border: 1px solid #e7e7ee;
-          border-radius: 12px;
-          padding: 18px;
-          margin-bottom: 22px;
-        }
-
-        .search-box {
-          position: relative;
-          max-width: 450px;
-        }
-
-        .search-icon {
-          position: absolute;
-          left: 14px;
-          top: 50%;
-          transform: translateY(-50%);
-          color: #85899a;
-        }
-
-        .search-input {
-          width: 100%;
-          border: 1px solid #dddde6;
-          border-radius: 8px;
-          padding: 12px 15px 12px 42px;
-          font-size: 14px;
-          outline: none;
-        }
-
-        .search-input:focus {
-          border-color: #625cf5;
-        }
-
-        .projects-grid {
-          display: grid;
-          grid-template-columns: repeat(2, 1fr);
-          gap: 20px;
-        }
-
-        .project-card {
-          background: white;
-          border: 1px solid #e7e7ee;
-          border-radius: 12px;
-          padding: 22px;
-          transition: 0.2s;
-          cursor: pointer;
-        }
-
-        .project-card:hover {
-          transform: translateY(-3px);
-          box-shadow: 0 10px 30px rgba(0,0,0,0.08);
-          border-color: #625cf5;
-        }
-
-        .project-card-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: flex-start;
-          gap: 15px;
-        }
-
-        .project-title-area {
-          display: flex;
-          gap: 13px;
-          flex: 1;
-        }
-
-        .project-icon {
-          width: 44px;
-          height: 44px;
-          border-radius: 10px;
-          background: #efefff;
-          color: #625cf5;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          flex-shrink: 0;
-        }
-
-        .project-name {
-          margin: 0;
-          font-size: 17px;
-        }
-
-        .project-category {
-          margin-top: 6px;
-          color: #85899a;
-          font-size: 13px;
-        }
-
-        .delete-button {
-          border: none;
-          background: #fff1f1;
-          color: #e05252;
-          width: 35px;
-          height: 35px;
-          border-radius: 7px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-        }
-
-        .delete-button:hover {
-          background: #ffe1e1;
-        }
-
-        .status-row {
-          margin-top: 22px;
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-        }
-
-        .status {
-          padding: 6px 11px;
-          border-radius: 20px;
-          font-size: 12px;
-          background: #efefff;
-          color: #625cf5;
-        }
-
-        .progress-text {
-          color: #666a7c;
-          font-size: 13px;
-        }
-
-        .progress-background {
-          height: 9px;
-          background: #eeeeF4;
-          border-radius: 20px;
-          overflow: hidden;
-          margin-top: 12px;
-        }
-
-        .progress-bar {
-          height: 100%;
-          background: #625cf5;
-          border-radius: 20px;
-          transition: width 0.3s;
-        }
-
-        .click-hint {
-          margin-top: 15px;
-          font-size: 12px;
-          color: #85899a;
-        }
-
-        .empty-state {
-          background: white;
-          border: 1px solid #e7e7ee;
-          border-radius: 12px;
-          padding: 60px 20px;
-          text-align: center;
-          color: #85899a;
-        }
-
-        .empty-state h3 {
-          color: #20243a;
-          margin: 15px 0 8px;
-        }
-
-        .modal-overlay {
-          position: fixed;
-          inset: 0;
-          background: rgba(15,18,35,0.55);
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          padding: 20px;
-          z-index: 100;
-        }
-
-        .modal {
-          width: 100%;
-          max-width: 500px;
-          background: white;
-          border-radius: 14px;
-          padding: 25px;
-          box-shadow: 0 20px 60px rgba(0,0,0,0.2);
-        }
-
-        .modal-header {
-          display: flex;
-          justify-content: space-between;
-          align-items: center;
-          margin-bottom: 25px;
-        }
-
-        .modal-header h2 {
-          margin: 0;
-          font-size: 21px;
-        }
-
-        .close-button {
-          border: none;
-          background: #f1f1f5;
-          width: 35px;
-          height: 35px;
-          border-radius: 7px;
-          display: flex;
-          align-items: center;
-          justify-content: center;
-          cursor: pointer;
-        }
-
-        .form-group {
-          margin-bottom: 18px;
-        }
-
-        .form-group label {
-          display: block;
-          margin-bottom: 7px;
-          font-size: 13px;
-          font-weight: bold;
-        }
-
-        .form-input,
-        .form-select {
-          width: 100%;
-          padding: 12px;
-          border: 1px solid #dddde6;
-          border-radius: 8px;
-          font-size: 14px;
-          outline: none;
-          background: white;
-        }
-
-        .form-input:focus,
-        .form-select:focus {
-          border-color: #625cf5;
-        }
-
-        .form-actions {
-          display: flex;
-          justify-content: flex-end;
-          gap: 10px;
-          margin-top: 25px;
-        }
-
-        .cancel-button {
-          border: 1px solid #dddde6;
-          background: white;
-          color: #55596b;
-          padding: 11px 17px;
-          border-radius: 8px;
-          cursor: pointer;
-        }
-
-        .save-button {
-          border: none;
-          background: #625cf5;
-          color: white;
-          padding: 11px 18px;
-          border-radius: 8px;
-          cursor: pointer;
-        }
-
-        @media (max-width: 850px) {
-          .projects-grid {
-            grid-template-columns: 1fr;
-          }
-        }
-
+        .projects-page-root * { box-sizing: border-box; }
+        .projects-page-root .project-card-clickable { cursor: pointer; transition: transform .2s, box-shadow .2s; }
+        .projects-page-root .project-card-clickable:hover { transform: translateY(-3px); }
+        .projects-page-root button:focus-visible,
+        .projects-page-root input:focus-visible,
+        .projects-page-root select:focus-visible { outline: 2px solid #049fd9; outline-offset: 2px; }
         @media (max-width: 600px) {
-          .projects-header {
-            padding: 20px;
-          }
-
-          .header-content {
-            align-items: flex-start;
-            flex-direction: column;
-          }
-
-          .content {
-            padding: 20px;
-          }
-
-          .add-button {
-            width: 100%;
-            justify-content: center;
-          }
+          .projects-page-root .projects-heading { padding: 18px !important; }
+          .projects-page-root .projects-title { font-size: 23px !important; }
         }
       `}</style>
 
-      <header className="projects-header">
-        <div className="header-content">
-
-          <div className="header-left">
-
-            <button
-              className="back-button"
-              onClick={onBack}
-            >
-              <ArrowLeft size={20} />
-            </button>
-
-            <div>
-              <h1 className="header-title">
-                Projects
-              </h1>
-
-              <p className="header-subtitle">
-                Manage and track all your projects
-              </p>
-            </div>
-
-          </div>
-
-          <button
-            className="add-button"
-            onClick={() =>
-              setShowModal(true)
-            }
-          >
-            <Plus size={18} />
-            Add Project
+      <header style={styles.header} className="projects-heading">
+        <div>
+          <button style={styles.button} onClick={onBack} type="button">
+            <ArrowLeft size={17} />
+            Back to Dashboard
           </button>
 
+          <h1
+            style={{ ...styles.title, marginTop: 18 }}
+            className="projects-title"
+          >
+            Projects
+          </h1>
+
+          <p style={styles.muted}>
+            Manage and track all your projects in one place.
+          </p>
         </div>
+
+        <button
+          style={styles.primaryButton}
+          type="button"
+          onClick={() => {
+            setPageError("");
+            setShowModal(true);
+          }}
+        >
+          <Plus size={18} />
+          Add Project
+        </button>
       </header>
 
-      <main className="content">
-
-        <div className="toolbar">
-
-          <div className="search-box">
-
-            <Search
-              className="search-icon"
-              size={18}
-            />
-
-            <input
-              className="search-input"
-              type="text"
-              placeholder="Search projects..."
-              value={search}
-              onChange={(event) =>
-                setSearch(event.target.value)
-              }
-            />
-
-          </div>
-
+      <div style={styles.toolbar}>
+        <div style={styles.searchWrap}>
+          <Search size={18} color={colors.muted} />
+          <input
+            style={styles.input}
+            value={search}
+            onChange={(event) => setSearch(event.target.value)}
+            placeholder="Search projects..."
+            aria-label="Search projects"
+          />
+          {search && (
+            <button
+              type="button"
+              style={{ ...styles.button, padding: 6 }}
+              onClick={() => setSearch("")}
+              aria-label="Clear search"
+            >
+              <X size={16} />
+            </button>
+          )}
         </div>
 
-        {filteredProjects.length === 0 ? (
+        <span style={{ color: colors.muted, fontSize: 13 }}>
+          {filteredProjects.length} project
+          {filteredProjects.length === 1 ? "" : "s"}
+        </span>
+      </div>
 
-          <div className="empty-state">
+      {pageError && (
+        <div
+          role="alert"
+          style={{
+            marginBottom: 20,
+            padding: 14,
+            borderRadius: 9,
+            background: darkMode ? "#451f2a" : "#fff1f2",
+            color: darkMode ? "#fecaca" : "#b42318",
+            border: `1px solid ${darkMode ? "#7f1d1d" : "#fecaca"}`,
+            overflowWrap: "anywhere",
+          }}
+        >
+          {pageError}
+        </div>
+      )}
 
-            <FolderKanban
-              size={48}
-              color="#625cf5"
-            />
+      {loading ? (
+        <div style={styles.card}>Loading projects and tasks...</div>
+      ) : filteredProjects.length === 0 ? (
+        <div style={{ ...styles.card, textAlign: "center", padding: 48 }}>
+          <FolderKanban
+            size={42}
+            color={colors.primary}
+            style={{ margin: "0 auto 12px" }}
+          />
+          <h3 style={{ color: colors.text }}>
+            {search ? "No matching projects" : "No projects yet"}
+          </h3>
+          <p style={styles.muted}>
+            {search
+              ? "Try a different search term."
+              : "Create your first project to get started."}
+          </p>
+          {!search && (
+            <button
+              style={styles.primaryButton}
+              type="button"
+              onClick={() => setShowModal(true)}
+            >
+              <Plus size={17} />
+              Create Project
+            </button>
+          )}
+        </div>
+      ) : (
+        <div style={styles.grid}>
+          {filteredProjects.map((project) => {
+            const projectProgress = getProgress(project);
+            const risks = getRisks(project);
 
-            <h3>
-              No projects found
-            </h3>
-
-            <p>
-              Try another search or create a new
-              project.
-            </p>
-
-          </div>
-
-        ) : (
-
-          <div className="projects-grid">
-
-            {filteredProjects.map(
-              (project) => (
-
-                <div
-                  className="project-card"
-                  key={project.id}
-                  onClick={() =>
-                    onOpenProject(project.id)
+            return (
+              <article
+                key={project.id}
+                style={styles.card}
+                className="project-card-clickable"
+                onClick={() => onOpenProject(project.id)}
+                onKeyDown={(event) => {
+                  if (event.key === "Enter" || event.key === " ") {
+                    event.preventDefault();
+                    onOpenProject(project.id);
                   }
+                }}
+                role="button"
+                tabIndex={0}
+                aria-label={`Open project ${project.name}`}
+              >
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    justifyContent: "space-between",
+                    gap: 12,
+                  }}
                 >
-
-                  <div className="project-card-header">
-
-                    <div className="project-title-area">
-
-                      <div className="project-icon">
-                        <FolderKanban
-                          size={21}
-                        />
-                      </div>
-
-                      <div>
-
-                        <h3 className="project-name">
-                          {project.name}
-                        </h3>
-
-                        <div className="project-category">
-                          {project.category}
-                        </div>
-
-                      </div>
-
-                    </div>
-
-                    <button
-                      className="delete-button"
-                      onClick={(event) => {
-                        event.stopPropagation();
-
-                        deleteProject(
-                          project.id
-                        );
-                      }}
-                      title="Delete project"
-                    >
-                      <Trash2 size={17} />
-                    </button>
-
-                  </div>
-
-                  <div className="status-row">
-
-                    <span className="status">
-                      {project.status}
+                  <div style={{ minWidth: 0 }}>
+                    <span style={styles.badge}>
+                      <FolderKanban size={13} />
+                      {project.category || "General"}
                     </span>
 
-                    <span className="progress-text">
-                      {project.progress}%
-                    </span>
-
-                  </div>
-
-                  <div className="progress-background">
-
-                    <div
-                      className="progress-bar"
+                    <h3
                       style={{
-                        width:
-                          `${project.progress}%`,
+                        color: colors.text,
+                        fontSize: 18,
+                        margin: "14px 0 8px",
+                        overflowWrap: "anywhere",
                       }}
-                    />
-
+                    >
+                      {project.name}
+                    </h3>
                   </div>
 
-                  <div className="click-hint">
-                    Click to view project details →
-                  </div>
-
+                  <button
+                    type="button"
+                    style={{
+                      ...styles.button,
+                      padding: 8,
+                      color: colors.danger,
+                      flexShrink: 0,
+                    }}
+                    aria-label={`Delete ${project.name}`}
+                    disabled={deletingId === project.id}
+                    onClick={(event) => {
+                      event.stopPropagation();
+                      void deleteProject(project.id);
+                    }}
+                  >
+                    {deletingId === project.id ? (
+                      "..."
+                    ) : (
+                      <Trash2 size={17} />
+                    )}
+                  </button>
                 </div>
 
-              )
-            )}
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    justifyContent: "space-between",
+                    gap: 10,
+                    marginTop: 18,
+                  }}
+                >
+                  <span style={{ color: colors.muted, fontSize: 13 }}>
+                    Status
+                  </span>
+                  <span style={styles.badge}>
+                    {project.status || "Planning"}
+                  </span>
+                </div>
 
-          </div>
+                <div style={{ marginTop: 20 }}>
+                  <div
+                    style={{
+                      display: "flex",
+                      justifyContent: "space-between",
+                      color: colors.muted,
+                      fontSize: 12,
+                    }}
+                  >
+                    <span>Task-based progress</span>
+                    <strong style={{ color: colors.text }}>
+                      {projectProgress}%
+                    </strong>
+                  </div>
 
-        )}
+                  <div style={styles.progressTrack}>
+                    <div
+                      style={{
+                        width: `${projectProgress}%`,
+                        height: "100%",
+                        borderRadius: 10,
+                        background:
+                          projectProgress === 100 ? "#22c55e" : colors.primary,
+                        transition: "width 0.2s",
+                      }}
+                    />
+                  </div>
+                </div>
 
-      </main>
+                {risks.length > 0 && (
+                  <div
+                    style={{
+                      marginTop: 16,
+                      padding: 12,
+                      borderRadius: 8,
+                      background: darkMode ? "#3b2c18" : "#fff7ed",
+                      color: darkMode ? "#fed7aa" : "#9a3412",
+                      fontSize: 12,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 6,
+                        fontWeight: 700,
+                        marginBottom: 7,
+                      }}
+                    >
+                      <AlertTriangle size={15} />
+                      Project risks
+                    </div>
+                    {risks.map((risk, index) => (
+                      <div key={`${project.id}-risk-${index}`}>• {risk}</div>
+                    ))}
+                  </div>
+                )}
+
+                <div
+                  style={{
+                    display: "flex",
+                    justifyContent: "flex-end",
+                    alignItems: "center",
+                    gap: 5,
+                    marginTop: 17,
+                    paddingTop: 13,
+                    borderTop: `1px solid ${colors.border}`,
+                    color: colors.primary,
+                    fontSize: 12,
+                    fontWeight: 650,
+                  }}
+                >
+                  View project <ArrowUpRight size={15} />
+                </div>
+              </article>
+            );
+          })}
+        </div>
+      )}
 
       {showModal && (
-
         <div
-          className="modal-overlay"
-          onClick={() =>
-            setShowModal(false)
-          }
-        >
-
-          <div
-            className="modal"
-            onClick={(event) =>
-              event.stopPropagation()
+          style={styles.modalBackdrop}
+          onMouseDown={(event) => {
+            if (event.target === event.currentTarget && !saving) {
+              setShowModal(false);
             }
-          >
-
-            <div className="modal-header">
-
-              <h2>
-                Create New Project
-              </h2>
-
+          }}
+        >
+          <form style={styles.modal} onSubmit={addProject}>
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                gap: 12,
+                marginBottom: 24,
+              }}
+            >
+              <div>
+                <h2 style={{ margin: 0, color: colors.text, fontSize: 22 }}>
+                  Create New Project
+                </h2>
+                <p style={{ ...styles.muted, marginBottom: 0 }}>
+                  Add a project to your workspace.
+                </p>
+              </div>
               <button
-                className="close-button"
-                onClick={() =>
-                  setShowModal(false)
-                }
+                type="button"
+                style={styles.button}
+                onClick={() => setShowModal(false)}
+                disabled={saving}
+                aria-label="Close dialog"
               >
                 <X size={18} />
               </button>
-
             </div>
 
-            <div className="form-group">
-
-              <label>
+            <div style={{ marginBottom: 18 }}>
+              <label style={styles.fieldLabel} htmlFor="project-name">
                 Project Name
               </label>
-
               <input
-                className="form-input"
-                type="text"
-                placeholder="Enter project name"
+                id="project-name"
+                style={styles.field}
                 value={projectName}
-                onChange={(event) =>
-                  setProjectName(
-                    event.target.value
-                  )
-                }
+                onChange={(event) => setProjectName(event.target.value)}
+                placeholder="Enter project name"
+                required
+                maxLength={120}
               />
-
             </div>
 
-            <div className="form-group">
-
-              <label>
+            <div style={{ marginBottom: 18 }}>
+              <label style={styles.fieldLabel} htmlFor="project-category">
                 Category
               </label>
-
               <select
-                className="form-select"
+                id="project-category"
+                style={styles.field}
                 value={category}
-                onChange={(event) =>
-                  setCategory(
-                    event.target.value
-                  )
-                }
+                onChange={(event) => setCategory(event.target.value)}
               >
-                <option value="Development">
-                  Development
-                </option>
-
-                <option value="Design">
-                  Design
-                </option>
-
-                <option value="Marketing">
-                  Marketing
-                </option>
-
-                <option value="Infrastructure">
-                  Infrastructure
-                </option>
-
-                <option value="Research">
-                  Research
-                </option>
-
-                <option value="Other">
-                  Other
-                </option>
+                <option>Development</option>
+                <option>Research</option>
+                <option>Design</option>
+                <option>Marketing</option>
+                <option>Other</option>
               </select>
-
             </div>
 
-            <div className="form-group">
-
-              <label>
-                Progress (%)
-              </label>
-
-              <input
-                className="form-input"
-                type="number"
-                min="0"
-                max="100"
-                value={progress}
-                onChange={(event) => {
-
-                  const value =
-                    Math.min(
-                      100,
-                      Math.max(
-                        0,
-                        Number(
-                          event.target.value
-                        )
-                      )
-                    );
-
-                  setProgress(
-                    String(value)
-                  );
-
-                }}
-              />
-
-            </div>
-
-            <div className="form-group">
-
-              <label>
+            <div style={{ marginBottom: 18 }}>
+              <label style={styles.fieldLabel} htmlFor="project-status">
                 Status
               </label>
-
               <select
-                className="form-select"
+                id="project-status"
+                style={styles.field}
                 value={status}
-                onChange={(event) =>
-                  setStatus(
-                    event.target.value
-                  )
-                }
+                onChange={(event) => {
+                  const nextStatus = event.target.value;
+                  setStatus(nextStatus);
+                  if (nextStatus === "Completed") setProgress("100");
+                }}
               >
-
-                <option value="Planning">
-                  Planning
-                </option>
-
-                <option value="In Progress">
-                  In Progress
-                </option>
-
-                <option value="On Hold">
-                  On Hold
-                </option>
-
-                <option value="Completed">
-                  Completed
-                </option>
-
+                <option>Planning</option>
+                <option>In Progress</option>
+                <option>Completed</option>
               </select>
-
             </div>
 
-            <div className="form-actions">
+            <div style={{ marginBottom: 24 }}>
+              <label style={styles.fieldLabel} htmlFor="project-progress">
+                Initial progress (
+                {status === "Completed" ? 100 : progress}%)
+              </label>
+              <input
+                id="project-progress"
+                type="range"
+                min="0"
+                max="100"
+                step="5"
+                value={status === "Completed" ? "100" : progress}
+                disabled={status === "Completed"}
+                onChange={(event) => setProgress(event.target.value)}
+                style={{ width: "100%", accentColor: colors.primary }}
+              />
+            </div>
 
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "flex-end",
+                gap: 10,
+                flexWrap: "wrap",
+              }}
+            >
               <button
-                className="cancel-button"
-                onClick={() =>
-                  setShowModal(false)
-                }
+                type="button"
+                style={styles.button}
+                onClick={() => setShowModal(false)}
+                disabled={saving}
               >
                 Cancel
               </button>
-
               <button
-                className="save-button"
-                onClick={addProject}
+                type="submit"
+                style={{
+                  ...styles.primaryButton,
+                  opacity: saving ? 0.7 : 1,
+                }}
+                disabled={saving}
               >
-                Create Project
+                <Plus size={17} />
+                {saving ? "Saving..." : "Create Project"}
               </button>
-
             </div>
-
-          </div>
-
+          </form>
         </div>
-
       )}
-
     </div>
   );
 }
